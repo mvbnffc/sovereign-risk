@@ -45,8 +45,8 @@ def disaggregate_values(gva_data, raster, sector):
 def main():
 
     # Set directories and paths
-    proj_path = "/Users/markbernhofen/Projects/sovereign-risk"
-    # proj_path = "/soge-home/users/smit0210/sovereign-risk"
+    # proj_path = "/Users/markbernhofen/Projects/sovereign-risk"
+    proj_path = "/soge-home/users/smit0210/sovereign-risk" # path for linux cluster
     input_data_path = os.path.join(proj_path, "Data", "Inputs", "Flood", "Exposure")
     check_directory_exists(input_data_path) # will exit if it doesn't exist
     output_data_path = os.path.join(proj_path, "Data", "Outputs", "0_exposure_data")
