@@ -172,4 +172,8 @@ cython_debug/
 .DS_Store
 
 # Data folders to ignore
-/data/
+data/
+*.csv
+*.log
+*.gpkg
+*.tif
