@@ -177,3 +177,6 @@ data/
 *.log
 *.gpkg
 *.tif
+
+# Ignore temp folder
+temp/
