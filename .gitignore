@@ -178,5 +178,9 @@ data/
 *.gpkg
 *.tif
 
+# Input and output folders to ignore
+inputs/
+outputs/
+
 # Ignore temp folder
 temp/
