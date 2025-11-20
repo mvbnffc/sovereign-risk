@@ -23,7 +23,7 @@ def calculate_risk(flood, building_values, heights, damage_percents):
 
     return risk
 
-def simple_risk_overlay(flood_path, exposure_path, output_path, damage_function, depth_adjuster):
+def simple_risk_overlay(flood_path, exposure_path, output_path, damage_function):
     '''
     This function performs a simple risk overlay analysis.
     It takes as input a flood map, an exposure map, and a vulnerability curve.
@@ -56,7 +56,6 @@ def simple_risk_overlay(flood_path, exposure_path, output_path, damage_function,
             flood_array = flood.read(1, window=window)
             exposure_array = exposure.read(1, window=window)
             flood_array = np.where(flood_array>0, flood_array, 0) # remove negative values
-            flood_array = flood_array/depth_adjuster # convert to m
             risk = calculate_risk(flood_array, exposure_array, damage_function[0], damage_function[1]) # depths index 0 and prp damage index 1
 
             dst.write(risk.astype(rasterio.float32), window=window, indexes=1)
