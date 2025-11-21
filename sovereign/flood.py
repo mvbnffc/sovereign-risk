@@ -1,7 +1,10 @@
-# Script with functions for flood risk processing
+# Script with functions and classes for flood risk processing
 
 import rasterio
 import numpy as np
+from dataclasses import dataclass
+from typing import Optional
+import pandas as pd
 
 def vectorized_damage(depth, value, heights, damage_percents):
     '''
@@ -100,3 +103,134 @@ def flopros_risk_overlay(flood_path, exposure_path, output_path, mask_path, dama
             risk = calculate_risk(flood_array, exposure_array, damage_function[0], damage_function[1]) # depths index 0 and prp damage index 1
 
             dst.write(risk.astype(rasterio.float32), window=window, indexes=1)
+
+
+@dataclass
+class BasinComponent:
+    admin_id: str              # GID_1 or similar
+    aeps: np.ndarray            # annual exceedance probabilities
+    sector: str                # sector name for flood loss curve
+    baseline_losses: np.ndarray # baseline flood losses
+    adapted_losses: np.ndarray # adapted flood losses (urban areas masked)
+    protection_aep: float       # New_Pr_L or Pr_L
+    meta: dict = None
+
+    def baseline_loss_at(self, aep_event: float) -> float:
+        return float(np.interp(aep_event, self.aeps, self.baseline_losses))
+
+    def adapted_loss_at(self, aep_event: float) -> float:
+        return float(np.interp(aep_event, self.aeps, self.adapted_losses))
+
+    def protected_loss(self, aep_event: float) -> float:
+        """Baseline scenario: apply baseline protection only."""
+        if aep_event > self.protection_aep:  # protected
+            return 0.0
+        else:
+            return self.baseline_loss_at(aep_event)
+
+    def adapted_loss(self, aep_event:float, adapted_protection_aep: float) -> float:
+        """
+        Adaptation scenario combining:
+        - baseline protection_aep (p_base)
+        - stronger adapted_protection_aep (p_adapt)
+        """
+        p_base = self.protection_aep
+        p_adapt = adapted_protection_aep
+
+        # Safety check
+        if p_adapt > p_base:
+            p_adapt=p_base
+
+        if aep_event > p_base:
+            # Baseline protection - no risk
+            return 0.0
+        elif p_adapt < aep_event < p_base:
+            # Above baseline protection but below adapted protection - sample adapted curve
+            return self.adapted_loss_at(aep_event)
+        else:
+            # Above both baseline and adapted protection - sample baseline curve
+            return self.baseline_loss_at(aep_event)
+        
+def build_basin_curves(df: pd.DataFrame):
+    basin_dict = {}
+
+    # group by basin, admin, AND sector
+    for (basin_id, admin_id, sector), g in df.groupby(["HB_L6", "GID_1", "sector"]):
+        aeps = g["AEP"].to_numpy()
+        losses = g["damages"].to_numpy()
+        adapted_losses = g["adapted_damages"].to_numpy()
+
+        # Add bankfull 2-year point
+        aeps = np.concatenate(([0.5], aeps))
+        losses = np.concatenate(([0.0], losses))
+        adapted_losses = np.concatenate(([0.0], adapted_losses))
+
+        # sort by AEP ascending for np.interp
+        order = np.argsort(aeps)
+        aeps = aeps[order]
+        losses = losses[order]
+        adapted_losses = adapted_losses[order]
+
+        prot = g["Pr_L_AEP"].iloc[0]
+
+        component = BasinComponent(
+            admin_id=admin_id,
+            sector=sector,
+            aeps=aeps,
+            baseline_losses=losses,
+            adapted_losses=adapted_losses,
+            protection_aep=prot,
+        )
+
+        basin_dict.setdefault(basin_id, []).append(component)
+
+    return {
+        basin_id: BasinLossCurve(basin_id=basin_id, components=components)
+        for basin_id, components in basin_dict.items()
+    }
+
+@dataclass
+class BasinLossCurve:
+    basin_id: int
+    components: list[BasinComponent]
+
+    def loss_at_event_aep(
+        self,
+        aep_event,
+        scenario: str = "baseline",
+        adapted_protection_aep: Optional[float] = None,
+    ) -> float:
+
+        if scenario == "baseline" or adapted_protection_aep is None:
+            return sum(c.protected_loss(aep_event) for c in self.components)
+        elif scenario == "adaptation":
+            return sum(c.adapted_loss(aep_event, adapted_protection_aep) for c in self.components)
+        else:
+            raise ValueError(f"Unknown scenario: {scenario}")
+
+
+@dataclass
+class BasinLossCurve:
+    basin_id: int
+    components: list[BasinComponent]
+
+    def loss_at_event_aep(
+        self,
+        aep_event: float,
+        scenario: str = "baseline",
+        adapted_protection_aep: Optional[float] = None,
+        sector: Optional[float] = None,
+    ) -> float:
+        # filter components if sector is specified
+        comps = (
+            [c for c in self.components if c.sector == sector]
+            if sector is not None else
+            self.components
+        )
+
+        if scenario == "baseline" or adapted_protection_aep is None:
+            return sum(c.protected_loss(aep_event) for c in comps)
+        elif scenario == "adaptation":
+            return sum(c.adaptation_loss(aep_event, adapted_protection_aep) for c in comps)
+        else:
+            raise ValueError(f"Unknown scenario: {scenario}")
