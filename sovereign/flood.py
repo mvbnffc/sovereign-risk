@@ -155,7 +155,7 @@ def build_basin_curves(df: pd.DataFrame):
     basin_dict = {}
 
     # group by basin, admin, AND sector
-    for (basin_id, admin_id, sector), g in df.groupby(["HB_L6", "GID_1", "sector"]):
+    for (basin_id, admin_id, sector), g in df.groupby(["HB_L6", "GID_1", "Sector"]):
         aeps = g["AEP"].to_numpy()
         losses = g["damages"].to_numpy()
         adapted_losses = g["adapted_damages"].to_numpy()
@@ -231,6 +231,6 @@ class BasinLossCurve:
         if scenario == "baseline" or adapted_protection_aep is None:
             return sum(c.protected_loss(aep_event) for c in comps)
         elif scenario == "adaptation":
-            return sum(c.adaptation_loss(aep_event, adapted_protection_aep) for c in comps)
+            return sum(c.adapted_loss(aep_event, adapted_protection_aep) for c in comps)
         else:
             raise ValueError(f"Unknown scenario: {scenario}")
