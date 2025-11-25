@@ -234,3 +234,38 @@ class BasinLossCurve:
             return sum(c.adapted_loss(aep_event, adapted_protection_aep) for c in comps)
         else:
             raise ValueError(f"Unknown scenario: {scenario}")
+        
+
+@dataclass
+class BasinClimateShift:
+    basin_id: int
+    ssp: str
+    epoch: str
+    baseline_rps: np.ndarray   # e.g. [10, 25, 50, 75 100, 200, 500]
+    future_rps: np.ndarray     # e.g. [8, 18, 35, 62, 70, 150, 400]
+
+    def adjust_aeps(self, aeps: np.ndarray) -> np.ndarray:
+        """
+        Take baseline AEPs (1/RP) and return the corresponding
+        future AEPs via interpolation on RP-space.
+        """
+        baseline_rps = 1.0 / aeps
+        # interpolate the future RP for each baseline RP
+        rp_future = np.interp(
+            baseline_rps,
+            self.baseline_rps,
+            self.future_rps,
+            left=self.future_rps[0],
+            right=self.future_rps[-1],
+        )
+        return 1.0 / rp_future
+    
+def make_uncertainty_curve(values, sds, k=1):
+    """Return low and high curves using ±k standard deviations with 0–1 bounds."""
+    values = np.array(values)
+    sds = np.array(sds)
+
+    low = np.clip(values - k * sds, 0, 1)
+    high = np.clip(values + k * sds, 0, 1)
+
+    return low.tolist(), high.tolist()
