@@ -67,7 +67,7 @@ def extract_discharge_timeseries(outlets, discharge_data):
 
     # Loop through basin outlets, storing each in turn
     for index, row in outlets.iterrows():
-        basin_id = row['HYBAS_ID']
+        basin_id = row['HYBAS_ID_L6']
         lat = row['Latitude']
         lon = row['Longitude']
         point_data = discharge_data.sel(latitude=lat, longitude=lon, method='nearest')
