@@ -1,10 +1,121 @@
 # Script with functions and classes for flood risk processing
 
 import rasterio
+import xarray as xr
+from lmoments3 import distr
+from scipy.stats import gumbel_r, kstest
+import os
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
+
+def combine_glofas(start, end, dir, area_filter):
+    '''
+    Function to combine glofas river discharge data into one xarray given a data directory with all the datasets in them
+    as well as a start and end year for the desired discharge data. Also loads and clips the accumulating area dataset
+    and masks the river discharge data by the specified upstream area threshold (area_filter)
+    '''
+    all_files = [os.path.join(dir, f"glofas_THA_{year}.grib") for year in range(start, end+1)] # if we do this for other countries will have to adjust filenames
+    # Load all datasets into array
+    datasets = [xr.open_dataset(file, engine='cfgrib') for file in all_files]
+    # Concatenate all datasets along the time dimension
+    combined_dataset = xr.concat(datasets, dim='time')
+    # Make sure datasets are sorted by time
+    combined_dataset = combined_dataset.sortby('time')
+    # Load upstream area 
+    upstream_area = xr.open_dataset(os.path.join(dir, "uparea_glofas_v4_0.nc"), engine='netcdf4') # might need to update the filename here
+    # Get lat-lon limits from glofas data as will use this to clip the upstream area
+    lat_limits = [combined_dataset.latitude.values[i] for i in [0, -1]]
+    lon_limits = [combined_dataset.longitude.values[i] for i in [0, -1]]
+    up_lats = upstream_area.latitude.values.tolist()
+    up_lons = upstream_area.longitude.values.tolist()
+    # Calculate slice indices
+    lat_slice_index = [
+    round((i-up_lats[0])/(up_lats[1]-up_lats[0]))
+    for i in lat_limits
+    ]
+    lon_slice_index = [
+        round((i-up_lons[0])/(up_lons[1]-up_lons[0]))
+        for i in lon_limits
+    ]
+    # Slice upstream area to chosen glofas region
+    red_upstream_area = upstream_area.isel(
+        latitude=slice(lat_slice_index[0], lat_slice_index[1]+1),
+        longitude=slice(lon_slice_index[0], lon_slice_index[1]+1),
+    )
+    # There are very minor rounding differences, so we update with the lat/lons from the glofas data
+    red_upstream_area = red_upstream_area.assign_coords({
+        'latitude': combined_dataset.latitude,
+        'longitude': combined_dataset.longitude,
+    })
+    # Add the upstream area to the main data object and print the updated glofas data object:
+    combined_dataset['uparea'] = red_upstream_area['uparea']
+    # Mask the river discharge data
+    combined_dataset_masked = combined_dataset.where(combined_dataset.uparea>=area_filter*1e6)
+
+
+    return combined_dataset_masked
+
+def extract_discharge_timeseries(outlets, discharge_data):
+    '''
+    function to extract discharge timeseries at basin outlet points. Returns a dictionary of timeseries with basin ID as key.
+    '''
+
+    # Dictionary to store timeseries data for each basin
+    basin_timeseries = {}
+
+    # Loop through basin outlets, storing each in turn
+    for index, row in outlets.iterrows():
+        basin_id = row['HYBAS_ID']
+        lat = row['Latitude']
+        lon = row['Longitude']
+        point_data = discharge_data.sel(latitude=lat, longitude=lon, method='nearest')
+        timeseries = point_data['dis24'].to_series()
+        # store in dictionary
+        basin_timeseries[basin_id] = timeseries
+    
+    return basin_timeseries
+
+def fit_gumbel_distribution(basin_timeseries):
+    '''
+    Calculate extreme value distribution to all the basin timeseries. This function calculates the gumbel distribution and performs 
+    the Kolomgorov-Smirnov test to check for the quality of fit. Returns a dictionary that reports each basin's gumbel parameters as 
+    well as D and p-value from the Kolmogorov-Smirnov test. 
+    '''
+    # Initiate dictionaries
+    gumbel_params = {}
+    fit_quality = {}
+
+    # Loop through basins, calculating annual maxima and fitting Gumbel distribution using L-moments
+    for basin_id, timeseries in basin_timeseries.items():
+        annual_maxima = timeseries.groupby(timeseries.index.year).max()
+
+        # Fit Gumbel distribution using L-moments
+        params = distr.gum.lmom_fit(annual_maxima)
+
+        # Perform the Kolmogorov-Smirnov test (checking quality of fit)
+        D, p_value = kstest(annual_maxima, 'gumbel_r', args=(params['loc'], params['scale']))
+
+        gumbel_params[basin_id] = params
+        fit_quality[basin_id] = (D, p_value)
+
+    
+    return gumbel_params, fit_quality
+
+def calculate_uniform_marginals(basin_timeseries, gumbel_parameters):
+    '''
+    This function will transform annual maximum values from the discharge timeseries into uniform marginals
+    for each river basin using the Cumulative Distribution Function of the fitted Gumbel distribution.
+    '''
+    # Initialize dictionary for uniform marginals
+    uniform_marginals = {}
+
+    for basin_id, timeseries in basin_timeseries.items():
+        params = gumbel_parameters[basin_id]
+        annual_maxima = timeseries.groupby(timeseries.index.year).max()
+        uniform_marginals[basin_id] = gumbel_r.cdf(annual_maxima, loc=params['loc'], scale=params['scale'])
+    return uniform_marginals
 
 def vectorized_damage(depth, value, heights, damage_percents):
     '''
