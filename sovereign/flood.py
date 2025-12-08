@@ -307,26 +307,6 @@ class BasinLossCurve:
 
     def loss_at_event_aep(
         self,
-        aep_event,
-        scenario: str = "baseline",
-        adapted_protection_aep: Optional[float] = None,
-    ) -> float:
-
-        if scenario == "baseline" or adapted_protection_aep is None:
-            return sum(c.protected_loss(aep_event) for c in self.components)
-        elif scenario == "adaptation":
-            return sum(c.adapted_loss(aep_event, adapted_protection_aep) for c in self.components)
-        else:
-            raise ValueError(f"Unknown scenario: {scenario}")
-
-
-@dataclass
-class BasinLossCurve:
-    basin_id: int
-    components: list[BasinComponent]
-
-    def loss_at_event_aep(
-        self,
         aep_event: float,
         scenario: str = "baseline",
         adapted_protection_aep: Optional[float] = None,
@@ -345,31 +325,7 @@ class BasinLossCurve:
             return sum(c.adapted_loss(aep_event, adapted_protection_aep) for c in comps)
         else:
             raise ValueError(f"Unknown scenario: {scenario}")
-        
-
-@dataclass
-class BasinClimateShift:
-    basin_id: int
-    ssp: str
-    epoch: str
-    baseline_rps: np.ndarray   # e.g. [10, 25, 50, 75 100, 200, 500]
-    future_rps: np.ndarray     # e.g. [8, 18, 35, 62, 70, 150, 400]
-
-    def adjust_aeps(self, aeps: np.ndarray) -> np.ndarray:
-        """
-        Take baseline AEPs (1/RP) and return the corresponding
-        future AEPs via interpolation on RP-space.
-        """
-        baseline_rps = 1.0 / aeps
-        # interpolate the future RP for each baseline RP
-        rp_future = np.interp(
-            baseline_rps,
-            self.baseline_rps,
-            self.future_rps,
-            left=self.future_rps[0],
-            right=self.future_rps[-1],
-        )
-        return 1.0 / rp_future
+    
     
 def make_uncertainty_curve(values, sds, k=1):
     """Return low and high curves using ±k standard deviations with 0–1 bounds."""
@@ -380,3 +336,81 @@ def make_uncertainty_curve(values, sds, k=1):
     high = np.clip(values + k * sds, 0, 1)
 
     return low.tolist(), high.tolist()
+
+def risk_data_future_shift(risk_data, future_data, hydro_model, scenario, epoch, stat, degrade_protection=True):
+    """
+    Function for converting the risk dataframe to reflect future climate shifts
+    
+    :param risk_data: dataframe with baseline risk data
+    :param future_data: datafrane with future climate shift data
+    :param hydro_model: hydrological model to filter by ()
+    :param scenario: climate scenario to filter by
+    :param epoch: future epoch of interest
+    :param stat: stat to filter by (e.g. 'mean', 'p10', 'p90')
+    :param degrade_protection: whether to degrade protection levels in future (default: True) e.g. 100-year protection becomes 50-year protection if RP changes accordingly 
+    """
+    # Filter future data
+    future_sub = future_data[
+        (future_data['hydro'] == hydro_model) &
+        (future_data['climate_scenario'] == scenario) &
+        (future_data['period'] == epoch) &
+        (future_data['stat'] == stat)
+    ].copy()
+
+    if future_sub.empty:
+        raise ValueError("No future data found for the specified filters.")
+
+    future_sub = future_sub[['HB_L6', 'return_period', 'new_rp_value']] # keep only relevant columns
+
+    # Merge onto baseline risk data
+    risk_data_future = risk_data.copy()
+    risk_data_future = risk_data_future.merge(future_sub.rename(columns={'return_period': 'RP', 'new_rp_value': 'RP_future'}),
+        on=['HB_L6', 'RP'], how='left')
+    
+    # User RP_future where available, else keep original RP
+    rp_eff = np.where(
+        risk_data_future['RP_future'].notnull(),
+        risk_data_future['RP_future'],
+        risk_data_future['RP'])
+    
+    # Add new AEP column
+    risk_data_future['AEP'] = 1.0 / rp_eff
+
+    # Optional: degrade protection with future climate change shifts
+    if degrade_protection:
+        # Build per-basin RP mapping: baseline_rps → future_rps
+        climate_shifts: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+        for basin_id, grp in future_sub.groupby('HB_L6'):
+            grp = grp.sort_values('return_period')
+            baseline_rps = grp['return_period'].to_numpy()
+            future_rps = grp['new_rp_value'].to_numpy()
+            climate_shifts[basin_id] = (baseline_rps, future_rps)
+
+        def shift_protection_aep(row):
+            basin_id = row["HB_L6"]
+            prot_rp  = row["Pr_L"]  # baseline protection RP
+
+            # No protection or no mapping? keep baseline AEP
+            if prot_rp == 0 or basin_id not in climate_shifts:
+                return row['Pr_L'], row["Pr_L_AEP"]
+
+            base_rps, fut_rps = climate_shifts[basin_id]
+
+            # Map baseline protection RP → future effective RP
+            prot_rp_future = np.interp(
+                prot_rp,
+                base_rps,
+                fut_rps,
+                left=fut_rps[0],
+                right=fut_rps[-1],
+            )
+
+            return prot_rp_future, 1.0 / prot_rp_future
+        
+        future_Pr_L, future_Pr_L_AEP = zip(*risk_data_future.apply(shift_protection_aep, axis=1)) 
+        
+        risk_data_future['Pr_L'] = future_Pr_L
+        risk_data_future['Pr_L_AEP'] = future_Pr_L_AEP
+        
+    return risk_data_future
