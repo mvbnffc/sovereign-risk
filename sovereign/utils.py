@@ -2,6 +2,8 @@ import geopandas as gpd
 from shapely.geometry import LineString
 from pyproj import Geod
 import pandas as pd
+from pathlib import Path
+from rasterio.transform import from_origin
 import numpy as np
 import rasterio
 from rasterio.warp import reproject, Resampling
@@ -235,3 +237,73 @@ def sum_rasters(raster_list, output_path):
     # Close datasets
     for ds in datasets:
         ds.close()
+
+
+def raster_sum(raster_path):
+    """
+    Sum all valid values in raster, return sum.
+    """
+    with rasterio.open(raster_path) as raster:
+        data = raster.read(1)
+        data = data[data != raster.nodata]
+        return np.nansum(data)
+
+
+
+def df_to_raster(sub: pd.DataFrame, out_path: Path, LAT_COL='latitude', LON_COL='longitude', VALUE_COL='value'):
+    """
+    Function for converting dataframe subset to raster.
+    Covnerts lat/lon/value dataframe to GeoTIFF.
+
+    This function is used to convert the ISIMIP dataframe to individual RP change rasters
+    """
+    if sub.empty:
+        return
+
+    # unique sorted coords
+    lats = np.sort(sub[LAT_COL].unique())
+    lons = np.sort(sub[LON_COL].unique())
+
+    if len(lats) < 2 or len(lons) < 2:
+        print(f"⚠️ Not enough points to build a grid for {out_path.name}")
+        return
+
+    lat_res = float(np.min(np.diff(lats)))
+    lon_res = float(np.min(np.diff(lons)))
+
+    # pivot to 2D grid (rows = lat, cols = lon)
+    grid = sub.pivot(index=LAT_COL, columns=LON_COL, values=VALUE_COL)
+
+    # ensure sorted and north-to-south
+    grid = grid.sort_index(ascending=False)
+
+    data = grid.values.astype('float32')
+
+    # affine transform: cell centers → raster origin at top-left
+    max_lat = lats.max()
+    min_lon = lons.min()
+    transform = from_origin(
+        min_lon - lon_res / 2.0,
+        max_lat + lat_res / 2.0,
+        lon_res,
+        lat_res,
+    )
+
+    height, width = data.shape
+
+    profile = {
+        "driver": "GTiff",
+        "height": height,
+        "width": width,
+        "count": 1,
+        "dtype": "float32",
+        "crs": "EPSG:4326",
+        "transform": transform,
+        "nodata": -9999.0,
+    }
+
+    # optional: fill NaNs with nodata
+    data = np.where(np.isfinite(data), data, profile["nodata"])
+
+    with rasterio.open(out_path, "w", **profile) as dst:
+        dst.write(data, 1)
