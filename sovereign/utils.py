@@ -250,7 +250,7 @@ def raster_sum(raster_path):
 
 
 
-def df_to_raster(sub: pd.DataFrame, out_path: Path, LAT_COL='latitude', LON_COL='longitude', VALUE_COL='value'):
+def df_to_raster(sub: pd.DataFrame, out_path: Path, LAT_COL='latitude', LON_COL='longitude', VALUE_COL='adjusted_return_period'):
     """
     Function for converting dataframe subset to raster.
     Covnerts lat/lon/value dataframe to GeoTIFF.
