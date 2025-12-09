@@ -9,6 +9,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
+from tqdm import tqdm
 
 def combine_glofas(start, end, dir, area_filter):
     '''
@@ -397,7 +398,7 @@ def risk_data_future_shift(risk_data, future_data, hydro_model, scenario, epoch,
 
             base_rps, fut_rps = climate_shifts[basin_id]
 
-            # Map baseline protection RP → future effective RP
+            # Map baseline protection RP → future effective RP (interpolate using the new loss probability curves)
             prot_rp_future = np.interp(
                 prot_rp,
                 base_rps,
@@ -414,3 +415,80 @@ def risk_data_future_shift(risk_data, future_data, hydro_model, scenario, epoch,
         risk_data_future['Pr_L_AEP'] = future_Pr_L_AEP
         
     return risk_data_future
+
+def run_simulation(basin_curves, n_years, adaptation_aep, copula_numbers):
+    """
+    Function for running the monte carlo flood simulation
+    
+    :param basin_curves: the basin curves dictionary (baseline or future)
+    :param n_years: number of years to simulate
+    :param adaptation_aep: the protection level of the adaptation scenario
+    :param copula_numbers: dataframe of random numbers from the copula for each basin and year
+    """
+
+    # Extract all sectors from the basin curves
+    all_sectors = {comp.sector for curve in basin_curves.values() for comp in curve.components}
+    # Extract all basin IDs
+    basin_ids = list(basin_curves.keys())
+
+    sector_baseline_losses = {s: np.zeros(n_years) for s in all_sectors}
+    sector_adapted_losses  = {s: np.zeros(n_years) for s in all_sectors}
+
+    for t in tqdm(range(n_years)):
+        sector_year_baseline = {s: 0.0 for s in all_sectors}
+        sector_year_adapted  = {s: 0.0 for s in all_sectors}
+        random_ns = copula_numbers.loc[t]
+
+        for basin_id in basin_ids:
+            basin_str = str(int(basin_id))
+            if basin_str not in random_ns:
+                continue
+
+            curve = basin_curves[basin_id]
+            aep_event = 1 - random_ns[basin_str]
+
+            for s in all_sectors:
+                bl = curve.loss_at_event_aep(aep_event, sector=s)
+                ad = curve.loss_at_event_aep(
+                    aep_event,
+                    scenario="adaptation",
+                    adapted_protection_aep=adaptation_aep,
+                    sector=s,
+                )
+                sector_year_baseline[s] += bl
+                sector_year_adapted[s]  += ad
+
+        for s in all_sectors:
+            sector_baseline_losses[s][t] = sector_year_baseline[s]
+            sector_adapted_losses[s][t]  = sector_year_adapted[s]
+
+    return sector_baseline_losses, sector_adapted_losses
+
+
+def extract_sectoral_losses(loss_dict, n_years):
+    """
+    Function for extracting sectoral losses from the loss dictionary
+    :param loss_dict: dictionary of losses per sector
+    :param n_years: number of years simulated
+    """
+    gva_sectors = ['Agriculture', 'Manufacturing', 'Service']
+    cap_sectors = ['Public', 'Private']
+
+    # GVA losses (sum of GVA sectors)
+    gva_losses = sum(loss_dict[s] for s in gva_sectors)
+    # Capital stock damage (sum of capital sectors)
+    cap_damage = sum(loss_dict[s] for s in cap_sectors)
+
+    # Store in dataframe and return
+    losses_df = pd.DataFrame({
+        "year_index": np.arange(n_years),
+        'GVA_loss': gva_losses,
+        'CAP_dam': cap_damage,
+        "AGR_loss": loss_dict['Agriculture'],
+        "MAN_loss": loss_dict['Manufacturing'],
+        "SER_loss": loss_dict['Service'],
+        "PUB_dam": loss_dict['Public'],
+        "PRI_dam": loss_dict['Private']
+    })
+
+    return losses_df
