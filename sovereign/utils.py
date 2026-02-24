@@ -8,6 +8,7 @@ import numpy as np
 import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.features import geometry_mask
+from rasterio.mask import mask
 import scipy.stats as stats
 from scipy.stats import genpareto, kstest
 
