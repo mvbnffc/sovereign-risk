@@ -8,6 +8,8 @@ import numpy as np
 import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.features import geometry_mask
+import scipy.stats as stats
+from scipy.stats import genpareto, kstest
 
 def map_flopros_to_adm(map_df, flopros, adm):
     '''
@@ -864,3 +866,52 @@ def rating_curve_level_samples(theta_hat, cov_theta, Q_T,
     # total H samples = base + extra variation from Q-uncertainty
     H_samples = H_base + dH_Q
     return H_samples
+
+def disaggregate_total_to_raster(total_value, weights_raster_path, output_path, *, nodata_out=0):
+    """
+    Disaggregate a single total_value over a raster using its cell values as weights.
+
+    out_cell = total_value * (weight_cell / sum_of_weights)
+
+    Parameters
+    ----------
+    total_value : float
+        Total value to distribute (e.g. 500e9).
+    weights_raster_path : str or Path
+        Path to raster whose values act as weights.
+    output_path : str or Path
+        Path to write the output raster (GeoTIFF).
+    nodata_out : numeric
+        Nodata value to set in output (default 0).
+
+    Writes
+    ------
+    A raster at output_path with same shape/transform/crs as weights raster.
+    """
+
+    # Create output directory if it doesn't exist
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with rasterio.open(weights_raster_path) as src:
+        w = src.read(1).astype("float64")
+        profile = src.profile.copy()
+        nodata_in = src.nodata
+
+    # Clean weights: mask nodata, NaN, inf, and non-positive values
+    valid = np.isfinite(w)
+    if nodata_in is not None:
+        valid &= (w != nodata_in)
+    valid &= (w > 0)
+
+    w_clean = np.where(valid, w, 0.0)
+    total_w = w_clean.sum()
+
+    out = np.zeros_like(w_clean, dtype="float32")
+    if total_w > 0:
+        out = (w_clean / total_w * float(total_value)).astype("float32")
+
+    # Write output
+    profile.update(dtype="float32", nodata=nodata_out, count=1, compress="lzw")
+    with rasterio.open(output_path, "w", **profile) as dst:
+        dst.write(out, 1)
