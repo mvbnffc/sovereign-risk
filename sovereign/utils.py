@@ -9,6 +9,7 @@ import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.features import geometry_mask
 from rasterio.mask import mask
+from rasterio.transform import rowcol
 import scipy.stats as stats
 from scipy.stats import genpareto, kstest
 
@@ -916,3 +917,135 @@ def disaggregate_total_to_raster(total_value, weights_raster_path, output_path, 
     profile.update(dtype="float32", nodata=nodata_out, count=1, compress="lzw")
     with rasterio.open(output_path, "w", **profile) as dst:
         dst.write(out, 1)
+
+
+def disaggregate_admin_to_raster(
+    admin_path,
+    value_col,
+    weights_raster_path,
+    output_path,
+    *,
+    admin_layer=None,
+    nodata_out=0,
+):
+    """
+    Disaggregate admin-level values over a raster using cell values as weights,
+    applied independently within each subnational region.
+
+    For each admin region:
+        out_cell = admin_value * (weight_cell / sum_of_weights_in_region)
+
+    Parameters
+    ----------
+    admin_path : str or Path
+        Path to GeoPackage containing subnational geometries and associated values.
+    value_col : str
+        Column name in admin_path holding the value to disaggregate.
+    weights_raster_path : str or Path
+        Path to raster whose cell values act as weights.
+    output_path : str or Path
+        Path to write the output GeoTIFF.
+    admin_layer : str or None
+        Layer name within the GeoPackage (passed to geopandas.read_file). If None,
+        the default/first layer is used.
+    nodata_out : numeric
+        Nodata value written to cells outside all admin regions (default 0).
+
+    Writes
+    ------
+    A float32 GeoTIFF at output_path with the same grid as the weights raster.
+    """
+
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # 1. Load admin vector, reproject to weights raster CRS
+    # ------------------------------------------------------------------
+    read_kwargs = {"filename": admin_path}
+    if admin_layer:
+        read_kwargs["layer"] = admin_layer
+
+    admin = gpd.read_file(**read_kwargs)
+
+    with rasterio.open(weights_raster_path) as src:
+        raster_crs = src.crs
+        profile = src.profile.copy()
+        nodata_in = src.nodata
+        nrows, ncols = src.height, src.width
+
+    if admin.crs != raster_crs:
+        admin = admin.to_crs(raster_crs)
+
+    # ------------------------------------------------------------------
+    # 2. Initialise output array
+    # ------------------------------------------------------------------
+    out = np.full((nrows, ncols), nodata_out, dtype="float32")
+
+    # ------------------------------------------------------------------
+    # 3. Disaggregate each region independently
+    # ------------------------------------------------------------------
+    with rasterio.open(weights_raster_path) as src:
+        for _, row in admin.iterrows():
+            admin_value = row[value_col]
+
+            # Skip missing values
+            if admin_value is None or np.isnan(float(admin_value)):
+                continue
+
+            geom = [row.geometry.__geo_interface__]
+
+            try:
+                w_region, transform_region = mask(
+                    src, geom, crop=True, nodata=np.nan, all_touched=False
+                )
+            except Exception:
+                # Geometry doesn't overlap raster extent
+                continue
+
+            w_region = w_region[0].astype("float64")  # (rows, cols) for this bbox
+
+            # Build valid-cell mask
+            valid = np.isfinite(w_region)
+            if nodata_in is not None:
+                valid &= (w_region != nodata_in)
+            valid &= (w_region > 0)
+
+            total_w = w_region[valid].sum()
+            if total_w == 0:
+                continue
+
+            # Disaggregated values for this region's bbox
+            disagg = np.where(valid, w_region / total_w * float(admin_value), 0.0)
+
+            # ----------------------------------------------------------
+            # Map bbox back to full-raster row/col offsets
+            # ----------------------------------------------------------
+            # transform_region.c / .f give the top-left corner of the crop
+            with rasterio.open(weights_raster_path) as _src:
+                row_off, col_off = rowcol(
+                    _src.transform,
+                    transform_region.c,  # x of top-left pixel centre
+                    transform_region.f,  # y of top-left pixel centre
+                )
+
+            row_end = row_off + disagg.shape[0]
+            col_end = col_off + disagg.shape[1]
+
+            # Clip to raster bounds (safety)
+            r0, r1 = max(row_off, 0), min(row_end, nrows)
+            c0, c1 = max(col_off, 0), min(col_end, ncols)
+            dr0 = r0 - row_off
+            dc0 = c0 - col_off
+
+            out[r0:r1, c0:c1] += disagg[dr0 : dr0 + (r1 - r0), dc0 : dc0 + (c1 - c0)].astype("float32")
+
+    # ------------------------------------------------------------------
+    # 4. Write output
+    # ------------------------------------------------------------------
+    profile.update(dtype="float32", nodata=nodata_out, count=1, compress="lzw")
+    with rasterio.open(output_path, "w", **profile) as dst:
+        dst.write(out, 1)
+
+    print(f"Written: {output_path}")
