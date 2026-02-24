@@ -177,6 +177,10 @@ data/
 *.log
 *.gpkg
 *.tif
+*.xml
+*.gzip
+*.docx
+*.pkl
 
 # Input and output folders to ignore
 inputs/
