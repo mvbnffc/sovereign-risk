@@ -1,6 +1,9 @@
 # Script with functions for macroeconomic modelling
 from openpyxl import load_workbook
 import pandas as pd
+from scipy.stats import gaussian_kde
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 import subprocess
 import datetime
 from pathlib import Path
@@ -296,3 +299,202 @@ def run_flood_sim_for_macro(basin_curves, adaptation_aep, num_sims, copula_rando
     })
 
     return baseline_shocks, adapted_shocks
+
+def create_dignad_parameter_grid(flood_df, n_samples=500, method='combined', 
+                                 ensure_extremes=True, random_state=42):
+    """
+    Create parameter grid for DIGNAD pre-computation from flood simulations
+    
+    Parameters:
+    -----------
+    flood_df : pd.DataFrame
+        Combined flood simulation results with [dY_T, dY_N, dK_priv, dK_pub]
+    n_samples : int
+        Target number of parameter combinations
+    method : str
+        'clustering', 'stratified', 'kde', or 'combined'
+    ensure_extremes : bool
+        Whether to ensure extreme events are included
+    random_state : int
+        Random seed for reproducibility
+    
+    Returns:
+    --------
+    param_grid : pd.DataFrame
+        Parameter grid for DIGNAD simulations
+    """
+    np.random.seed(random_state)
+    param_cols = ['dY_T', 'dY_N', 'dK_priv', 'dK_pub']
+    X = flood_df[param_cols].values
+    
+    print(f"\nCreating DIGNAD parameter grid using '{method}' method...")
+    print(f"Target samples: {n_samples}")
+    
+    if method == 'clustering':
+        grid = _create_clustering_grid(X, param_cols, n_samples)
+    
+    elif method == 'stratified':
+        grid = _create_stratified_grid(flood_df, param_cols, n_samples)
+    
+    elif method == 'kde':
+        grid = _create_kde_grid(X, param_cols, n_samples)
+    
+    elif method == 'combined':
+        # Use multiple methods for better coverage
+        n_per_method = n_samples // 3
+        
+        grid1 = _create_clustering_grid(X, param_cols, n_per_method)
+        grid2 = _create_stratified_grid(flood_df, param_cols, n_per_method)
+        grid3 = _create_kde_grid(X, param_cols, n_samples - 2*n_per_method)
+        
+        grid = pd.concat([grid1, grid2, grid3], ignore_index=True)
+        
+        # Remove duplicates
+        grid = grid.drop_duplicates(subset=param_cols).reset_index(drop=True)
+    
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    
+    # Add extreme events if requested
+    if ensure_extremes:
+        grid = _add_extreme_events(grid, flood_df, param_cols)
+    
+    # Add metadata
+    grid['grid_method'] = method
+    grid['grid_index'] = range(len(grid))
+    
+    # Rename columns for DIGNAD compatibility
+    grid_renamed = grid.copy()
+    grid_renamed.rename(columns={
+        'dY_T': 'tradable_impact',
+        'dY_N': 'nontradable_impact', 
+        'dK_priv': 'private_impact',
+        'dK_pub': 'public_impact'
+    }, inplace=True)
+    
+    # Add fixed DIGNAD parameters
+    grid_renamed['share_tradable'] = 0.5  # Adjust as needed
+    grid_renamed['reconstruction_efficiency'] = 0
+    grid_renamed['public_debt_premium'] = 0
+    
+    print(f"\nFinal parameter grid:")
+    print(f"  Grid size: {len(grid_renamed)} unique combinations")
+    print(f"  Parameter ranges:")
+    for col in param_cols:
+        print(f"    {col}: [{grid[col].min():.3f}, {grid[col].max():.3f}]")
+    
+    return grid_renamed
+
+
+def _create_clustering_grid(X, param_cols, n_samples):
+    """Create grid using k-means clustering"""
+    
+    # Standardize for clustering
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Perform k-means
+    n_clusters = min(n_samples, len(X))
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    kmeans.fit(X_scaled)
+    
+    # Get cluster centers
+    centers_scaled = kmeans.cluster_centers_
+    centers = scaler.inverse_transform(centers_scaled)
+    
+    # Also include some boundary points from each cluster
+    grid_points = list(centers)
+    
+    for i in range(n_clusters):
+        cluster_mask = kmeans.labels_ == i
+        if cluster_mask.sum() > 1:
+            cluster_points = X[cluster_mask]
+            # Add point furthest from center
+            distances = np.linalg.norm(cluster_points - centers[i], axis=1)
+            if len(distances) > 0:
+                furthest_idx = np.argmax(distances)
+                grid_points.append(cluster_points[furthest_idx])
+    
+    grid = pd.DataFrame(grid_points[:n_samples], columns=param_cols)
+    return grid
+
+
+def _create_stratified_grid(flood_df, param_cols, n_samples):
+    """Create grid using stratified sampling based on severity"""
+    
+    # Calculate total loss for stratification
+    flood_df = flood_df.copy()
+    flood_df['total_loss'] = flood_df[param_cols].sum(axis=1)
+    
+    # Create severity bins
+    n_bins = min(20, len(flood_df) // 10)
+    flood_df['severity_bin'] = pd.qcut(flood_df['total_loss'], q=n_bins, 
+                                       labels=False, duplicates='drop')
+    
+    # Sample from each bin
+    samples_per_bin = n_samples // n_bins
+    remainder = n_samples % n_bins
+    
+    stratified_samples = []
+    
+    for bin_id in range(n_bins):
+        bin_data = flood_df[flood_df['severity_bin'] == bin_id]
+        if len(bin_data) > 0:
+            # Add extra sample to some bins to reach exact n_samples
+            extra = 1 if bin_id < remainder else 0
+            sample_size = min(samples_per_bin + extra, len(bin_data))
+            
+            bin_sample = bin_data[param_cols].sample(n=sample_size, replace=False)
+            stratified_samples.append(bin_sample)
+    
+    grid = pd.concat(stratified_samples, ignore_index=True)
+    return grid
+
+
+def _create_kde_grid(X, param_cols, n_samples):
+    """Create grid by sampling from kernel density estimate"""
+    
+    # Fit KDE to joint distribution
+    kde = gaussian_kde(X.T, bw_method='scott')
+    
+    # Sample from KDE
+    samples = kde.resample(n_samples).T
+    
+    # Ensure samples are within data bounds
+    for i in range(samples.shape[1]):
+        samples[:, i] = np.clip(samples[:, i], 
+                               X[:, i].min() * 0.95,  # Allow slight extrapolation
+                               X[:, i].max() * 1.05)
+    
+    grid = pd.DataFrame(samples, columns=param_cols)
+    return grid
+
+
+def _add_extreme_events(grid, flood_df, param_cols):
+    """Add extreme parameter combinations to ensure tail coverage"""
+    
+    extreme_points = []
+    X = flood_df[param_cols].values
+    
+    # Add maximum for each parameter
+    for i, col in enumerate(param_cols):
+        max_idx = np.argmax(X[:, i])
+        extreme_points.append(X[max_idx])
+        
+        # Also add 99.5th percentile
+        p995_val = np.percentile(X[:, i], 99.5)
+        close_idx = np.argmin(np.abs(X[:, i] - p995_val))
+        extreme_points.append(X[close_idx])
+    
+    # Add joint extremes (high total loss)
+    total_loss = X.sum(axis=1)
+    extreme_indices = np.argsort(total_loss)[-20:]  # Top 20 most severe
+    for idx in extreme_indices:
+        extreme_points.append(X[idx])
+    
+    # Add to grid
+    extreme_df = pd.DataFrame(extreme_points, columns=param_cols)
+    grid = pd.concat([grid, extreme_df], ignore_index=True)
+    grid = grid.drop_duplicates(subset=param_cols).reset_index(drop=True)
+    
+    return grid
