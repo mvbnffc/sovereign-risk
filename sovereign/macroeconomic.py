@@ -78,6 +78,8 @@ def prepare_DIGNAD(calibration_csv, adaptation_cost, root_dir):
 
     ### 1. Load the original Excel file - this is where all DIGNAD parameters are set
     # Find parent directory
+    # Debug 
+    print(root_dir)
     DIGNAD_root = os.path.join(root_dir, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
     excel_file = os.path.join(DIGNAD_root, "input_DIG-ND.xlsx") # Assuming DIGNAD folder is in correct location
     wb = load_workbook(excel_file)
@@ -111,7 +113,7 @@ def prepare_DIGNAD(calibration_csv, adaptation_cost, root_dir):
     wb.save(excel_file)
 
 def run_DIGNAD(sim_start_year, nat_disaster_year, recovery_period, tradable_impact, nontradable_impact,
-                reconstruction_efficiency, public_debt_premium, public_impact, private_impact, share_tradable):
+                reconstruction_efficiency, public_debt_premium, public_impact, private_impact, share_tradable, root_dir):
     '''
     This function runs on instance of DIGNAD with a prespecified calibration csv.
     Parameters passed to the function are the natural hazard parameters.
@@ -120,7 +122,6 @@ def run_DIGNAD(sim_start_year, nat_disaster_year, recovery_period, tradable_impa
     '''
 
     ### 1. Set DIGNAD directory path (load Excel file)
-    root = Path.cwd().parent
     DIGNAD_root = os.path.join(root, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
     excel_file = os.path.join(DIGNAD_root, "input_DIG-ND.xlsx") # Assuming DIGNAD folder is in correct location
     wb = load_workbook(excel_file)
