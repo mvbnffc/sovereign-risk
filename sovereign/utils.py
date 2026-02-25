@@ -926,126 +926,115 @@ def disaggregate_admin_to_raster(
     output_path,
     *,
     admin_layer=None,
-    nodata_out=0,
+    nodata_out=0.0,
 ):
     """
     Disaggregate admin-level values over a raster using cell values as weights,
     applied independently within each subnational region.
 
-    For each admin region:
-        out_cell = admin_value * (weight_cell / sum_of_weights_in_region)
+        out_cell = weight_cell * (admin_value / sum_of_weights_in_admin)
 
     Parameters
     ----------
     admin_path : str or Path
-        Path to GeoPackage containing subnational geometries and associated values.
+        Path to GeoPackage (or any vector file readable by geopandas).
     value_col : str
-        Column name in admin_path holding the value to disaggregate.
+        Column in the vector file holding the value to disaggregate (e.g. "GDP").
     weights_raster_path : str or Path
-        Path to raster whose cell values act as weights.
+        Raster whose cell values act as weights (e.g. population, built-up volume).
     output_path : str or Path
         Path to write the output GeoTIFF.
     admin_layer : str or None
-        Layer name within the GeoPackage (passed to geopandas.read_file). If None,
-        the default/first layer is used.
-    nodata_out : numeric
-        Nodata value written to cells outside all admin regions (default 0).
+        Layer name within the GeoPackage. None uses the default/first layer.
+    nodata_out : float
+        Value written to cells outside all admin regions (default 0).
 
     Writes
     ------
-    A float32 GeoTIFF at output_path with the same grid as the weights raster.
+    A float32 GeoTIFF at output_path, aligned to the weights raster grid.
     """
-
+    import numpy as np
+    import rasterio
+    from rasterio import features
+    import geopandas as gpd
+    from pathlib import Path
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # 1. Load admin vector, reproject to weights raster CRS
+    # 1. Load and prepare admin vector
     # ------------------------------------------------------------------
-    read_kwargs = {"filename": admin_path}
+    read_kwargs = dict(filename=admin_path)
     if admin_layer:
         read_kwargs["layer"] = admin_layer
+    admin = gpd.read_file(**read_kwargs).reset_index(drop=True)
 
-    admin = gpd.read_file(**read_kwargs)
+    # Assign a 1-based integer index per region (0 = background/nodata)
+    admin["_idx"] = np.arange(1, len(admin) + 1, dtype=np.int32)
 
-    with rasterio.open(weights_raster_path) as src:
-        raster_crs = src.crs
-        profile = src.profile.copy()
-        nodata_in = src.nodata
-        nrows, ncols = src.height, src.width
-
-    if admin.crs != raster_crs:
-        admin = admin.to_crs(raster_crs)
-
-    # ------------------------------------------------------------------
-    # 2. Initialise output array
-    # ------------------------------------------------------------------
-    out = np.full((nrows, ncols), nodata_out, dtype="float32")
+    # Lookup array: index → admin value to disaggregate
+    # (length = n_admins + 1 so index 0 = background)
+    n = len(admin)
+    idx_to_value = np.zeros(n + 1, dtype=np.float64)
+    idx_to_value[admin["_idx"].values] = (
+        pd.to_numeric(admin[value_col], errors="coerce").fillna(0.0).values
+    )
 
     # ------------------------------------------------------------------
-    # 3. Disaggregate each region independently
+    # 2. Open weights raster; reproject admin if needed
     # ------------------------------------------------------------------
     with rasterio.open(weights_raster_path) as src:
-        for _, row in admin.iterrows():
-            admin_value = row[value_col]
+        if admin.crs != src.crs:
+            admin = admin.to_crs(src.crs)
 
-            # Skip missing values
-            if admin_value is None or np.isnan(float(admin_value)):
-                continue
+        # ------------------------------------------------------------------
+        # 3. Rasterize admin polygons → integer index grid
+        # ------------------------------------------------------------------
+        shapes = zip(admin.geometry, admin["_idx"].astype(int))
+        admin_idx = features.rasterize(
+            shapes=shapes,
+            out_shape=(src.height, src.width),
+            transform=src.transform,
+            fill=0,          # background = 0
+            dtype="int32",
+            all_touched=False,
+        )
 
-            geom = [row.geometry.__geo_interface__]
-
-            try:
-                w_region, transform_region = mask(
-                    src, geom, crop=True, nodata=np.nan, all_touched=False
-                )
-            except Exception:
-                # Geometry doesn't overlap raster extent
-                continue
-
-            w_region = w_region[0].astype("float64")  # (rows, cols) for this bbox
-
-            # Build valid-cell mask
-            valid = np.isfinite(w_region)
-            if nodata_in is not None:
-                valid &= (w_region != nodata_in)
-            valid &= (w_region > 0)
-
-            total_w = w_region[valid].sum()
-            if total_w == 0:
-                continue
-
-            # Disaggregated values for this region's bbox
-            disagg = np.where(valid, w_region / total_w * float(admin_value), 0.0)
-
-            # ----------------------------------------------------------
-            # Map bbox back to full-raster row/col offsets
-            # ----------------------------------------------------------
-            # transform_region.c / .f give the top-left corner of the crop
-            with rasterio.open(weights_raster_path) as _src:
-                row_off, col_off = rowcol(
-                    _src.transform,
-                    transform_region.c,  # x of top-left pixel centre
-                    transform_region.f,  # y of top-left pixel centre
-                )
-
-            row_end = row_off + disagg.shape[0]
-            col_end = col_off + disagg.shape[1]
-
-            # Clip to raster bounds (safety)
-            r0, r1 = max(row_off, 0), min(row_end, nrows)
-            c0, c1 = max(col_off, 0), min(col_end, ncols)
-            dr0 = r0 - row_off
-            dc0 = c0 - col_off
-
-            out[r0:r1, c0:c1] += disagg[dr0 : dr0 + (r1 - r0), dc0 : dc0 + (c1 - c0)].astype("float32")
+        # ------------------------------------------------------------------
+        # 4. Read and sanitise weights
+        # ------------------------------------------------------------------
+        weights = src.read(1, masked=True).filled(0.0).astype(np.float64)
+        weights[~np.isfinite(weights)] = 0.0
+        weights[weights < 0] = 0.0
 
     # ------------------------------------------------------------------
-    # 4. Write output
+    # 5. Sum weights per admin region (vectorised via bincount)
     # ------------------------------------------------------------------
-    profile.update(dtype="float32", nodata=nodata_out, count=1, compress="lzw")
-    with rasterio.open(output_path, "w", **profile) as dst:
-        dst.write(out, 1)
+    weight_sums = np.bincount(
+        admin_idx.ravel(),
+        weights=weights.ravel(),
+        minlength=n + 1,
+    )  # shape (n+1,)
 
-    print(f"Written: {output_path}")
+    # ------------------------------------------------------------------
+    # 6. Compute per-admin scale factor: admin_value / total_weight
+    # ------------------------------------------------------------------
+    scale = np.zeros(n + 1, dtype=np.float64)
+    nonzero = weight_sums > 0
+    scale[nonzero] = idx_to_value[nonzero] / weight_sums[nonzero]
+
+    # ------------------------------------------------------------------
+    # 7. Apply scale pixel-wise
+    # ------------------------------------------------------------------
+    alloc = (weights * scale[admin_idx]).astype("float32")
+
+    # ------------------------------------------------------------------
+    # 8. Write output
+    # ------------------------------------------------------------------
+    with rasterio.open(weights_raster_path) as src:
+        meta = src.meta.copy()
+
+    meta.update(dtype="float32", count=1, compress="lzw", nodata=nodata_out)
+    with rasterio.open(output_path, "w", **meta) as dst:
+        dst.write(alloc, 1)
