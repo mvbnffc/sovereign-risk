@@ -77,9 +77,6 @@ def prepare_DIGNAD(calibration_csv, adaptation_cost, root_dir):
     annual_adaptation_cost = (adaptation_cost / 5) / Thai_GDP * 100
 
     ### 1. Load the original Excel file - this is where all DIGNAD parameters are set
-    # Find parent directory
-    # Debug 
-    print(root_dir)
     DIGNAD_root = os.path.join(root_dir, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
     excel_file = os.path.join(DIGNAD_root, "input_DIG-ND.xlsx") # Assuming DIGNAD folder is in correct location
     wb = load_workbook(excel_file)
@@ -122,7 +119,7 @@ def run_DIGNAD(sim_start_year, nat_disaster_year, recovery_period, tradable_impa
     '''
 
     ### 1. Set DIGNAD directory path (load Excel file)
-    DIGNAD_root = os.path.join(root, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
+    DIGNAD_root = os.path.join(root_dir, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
     excel_file = os.path.join(DIGNAD_root, "input_DIG-ND.xlsx") # Assuming DIGNAD folder is in correct location
     wb = load_workbook(excel_file)
 
