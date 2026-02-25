@@ -62,7 +62,7 @@ def update_natural_hazard_parameters(sim_start_year, nat_disaster_year, recovery
 
     return excel_updates
 
-def prepare_DIGNAD(calibration_csv, adaptation_cost):
+def prepare_DIGNAD(calibration_csv, adaptation_cost, root_dir):
     '''
     This function prepares DIGNAD for being run in a simulation.
     It updates the calibration sheet with parameters from a CSV file.
@@ -78,8 +78,7 @@ def prepare_DIGNAD(calibration_csv, adaptation_cost):
 
     ### 1. Load the original Excel file - this is where all DIGNAD parameters are set
     # Find parent directory
-    root = Path.cwd().parent.parent
-    DIGNAD_root = os.path.join(root, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
+    DIGNAD_root = os.path.join(root_dir, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
     excel_file = os.path.join(DIGNAD_root, "input_DIG-ND.xlsx") # Assuming DIGNAD folder is in correct location
     wb = load_workbook(excel_file)
 
