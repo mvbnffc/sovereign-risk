@@ -78,7 +78,7 @@ def prepare_DIGNAD(calibration_csv, adaptation_cost):
 
     ### 1. Load the original Excel file - this is where all DIGNAD parameters are set
     # Find parent directory
-    root = Path.cwd().parent
+    root = Path.cwd().parent.parent
     DIGNAD_root = os.path.join(root, "DIGNAD", "DIGNAD_Toolkit", "DIGNAD_Toolkit")
     excel_file = os.path.join(DIGNAD_root, "input_DIG-ND.xlsx") # Assuming DIGNAD folder is in correct location
     wb = load_workbook(excel_file)
