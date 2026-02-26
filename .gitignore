@@ -151,6 +151,10 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# Claude code
+CLAUDE.md
+install.cmd
+
 # Pyre type checker
 .pyre/
 
