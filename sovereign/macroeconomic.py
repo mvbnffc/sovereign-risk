@@ -357,6 +357,10 @@ def create_dignad_parameter_grid(flood_df, n_samples=500, method='combined',
         grid = _add_extreme_events(grid, flood_df, param_cols)
 
     # Always add explicit zero-loss scenario
+    zero_df = pd.DataFrame([[0.0, 0.0, 0.0, 0.0]], columns=param_cols)
+    grid = pd.concat([grid, zero_df], ignore_index=True)
+    grid = grid.drop_duplicates(subset=param_cols).reset_index(drop=True)
+    # Add zero-loss scenario to the top
     zero_mask = (grid[param_cols] == 0).all(axis=1)
     grid = pd.concat([grid[zero_mask], grid[~zero_mask]], ignore_index=True)
     
