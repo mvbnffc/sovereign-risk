@@ -355,6 +355,11 @@ def create_dignad_parameter_grid(flood_df, n_samples=500, method='combined',
     # Add extreme events if requested
     if ensure_extremes:
         grid = _add_extreme_events(grid, flood_df, param_cols)
+
+    # Always add explicit zero-loss scenario
+    zero_mask = (grid[param_cols] == 0).all(axis=1)
+    grid = pd.concat([grid[zero_mask], grid[~zero_mask]], ignore_index=True)
+    
     
     # Add metadata
     grid['grid_method'] = method
