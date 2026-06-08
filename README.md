@@ -44,7 +44,8 @@ If you prefer pip, the editable install also declares the Python dependencies:
 pip install -e .
 ```
 
-The full workflow also requires MATLAB on `PATH` and the DIGNAD toolkit at:
+The full workflow also requires MATLAB on `PATH` and the DIGNAD toolkit. See
+the DIGNAD setup notes below.
 
 ```text
 DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/
@@ -127,9 +128,37 @@ The current local `inputs/` folder is about 4.6 GB and `outputs/` is about
 calls MATLAB, and reads the resulting Excel output. A successful run requires:
 
 - MATLAB available on the system `PATH`;
-- DIGNAD installed at `DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/`;
-- `input_DIG-ND.xlsx` inside that directory;
-- `simulate.m` inside that directory.
+- DIGNAD downloaded from the IMF DIGNAD page:
+  <https://climatedata.imf.org/pages/dignad>;
+- the DIGNAD toolkit copied into this repository under `DIGNAD/`;
+- the Thailand-calibrated `input_DIG-ND.xlsx` workbook copied into the DIGNAD
+  toolkit folder, replacing the default workbook.
+
+Download `DIGNAD.zip` from the IMF website, unzip it, and copy the extracted
+`DIGNAD` folder into the repository root. The intended structure is:
+
+```text
+sovereign-risk/
+  DIGNAD/
+    DIGNAD_Toolkit/
+      DIGNAD_Toolkit/
+        input_DIG-ND.xlsx
+        simulate.m
+        ...
+```
+
+The key model files, including `simulate.m`, should be inside the innermost
+`DIGNAD_Toolkit` folder. If the IMF zip extracts to a slightly different folder
+layout, adjust the copied folder so that the Python code can find:
+
+```text
+DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/input_DIG-ND.xlsx
+DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/simulate.m
+```
+
+The default IMF `input_DIG-ND.xlsx` should be replaced with the pre-prepared
+Thailand-calibrated workbook supplied with this project. That workbook is set up
+to be modified by the Python scripts before each DIGNAD run.
 
 Only redistribute the DIGNAD toolkit if its licence permits redistribution.
 Otherwise, archive a short setup note and point users to the official DIGNAD
