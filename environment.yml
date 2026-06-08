@@ -1,0 +1,31 @@
+name: sovereign-risk
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - geopandas
+  - shapely
+  - pyproj
+  - rasterio
+  - rasterstats
+  - xarray
+  - cfgrib
+  - eccodes
+  - netcdf4
+  - scipy
+  - scikit-learn
+  - openpyxl
+  - matplotlib
+  - seaborn
+  - tqdm
+  - joblib
+  - jupyter
+  - ipykernel
+  - pip
+  - pip:
+      - lmoments3
+      - copulas
+      - country_converter
+      - tabulate
