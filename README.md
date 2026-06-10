@@ -21,7 +21,7 @@ that run the research pipeline from data preparation through paper figures.
 | `notebooks/preparation/` | Final raw-data preparation notebooks for exposure, flood protection, future flood shifts, and discharge dependence. |
 | `notebooks/pre_sim/` | Final expensive pre-simulation notebooks, especially flood overlays, basin aggregation, and DIGNAD pre-computation. |
 | `notebooks/paper_analysis/` | Final paper simulations, validation, and figures. |
-| `notebooks/0.*` to `notebooks/4_*` | Earlier/development numbered workflow notebooks; review before deleting because some may still contain useful checks. |
+| `notebooks/0.*` to `notebooks/4_*` | Earlier/development numbered workflow notebooks. |
 | `inputs/` | Required raw and prepared input data. Ignored by Git; publish separately as a data bundle. |
 | `outputs/` | Generated outputs and reproducibility caches. Ignored by Git; selected outputs should be archived with the data bundle. |
 | `DIGNAD/` | Local DIGNAD toolkit installation. Ignored by Git; see DIGNAD notes below. |
@@ -48,79 +48,87 @@ The full workflow also requires MATLAB on `PATH` and the DIGNAD toolkit. See
 the DIGNAD setup notes below.
 
 ```text
-DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/
+DIGNAD/DIGNAD_Toolkit/
 ```
 
-## Reproducing the Analysis
+## Reproducibility
 
-1. Download and unpack the data bundle into the repository root so that
-   `inputs/`, selected `outputs/`, and, where redistributable, `DIGNAD/` match
-   the expected project structure.
-2. Start Jupyter from the repository root:
+The data and output bundles are hosted separately from the code repository.
+Replace the placeholder links below with the final data repository URLs.
+
+### Option A: Full Model Reproduction
+
+Use this option to rebuild the full analysis from source inputs.
+
+Required bundle:
+
+- `inputs/` folder: `[placeholder: input data repository link]`
+
+Steps:
+
+1. Download and unpack `inputs/` into the repository root.
+2. Install the Python package and configure DIGNAD as described below.
+3. Start Jupyter from the repository root:
 
    ```bash
    jupyter notebook
    ```
 
-3. Run the notebooks in the analysis order below.
+4. Run all notebooks in the order shown in the runtime table.
 
-## Working Analysis Map
+### Option B: Paper Simulation Reproduction
 
-Use this as the working checklist while rerunning and cleaning the repository.
+Use this option to reproduce the final paper simulations without rerunning all
+preparation and pre-simulation notebooks.
 
-| Stage | Keep / run | Purpose | Decision after rerun |
-| --- | --- | --- | --- |
-| 0a | `notebooks/preparation/exposure.ipynb` | Prepare gridded exposure and economic value layers. | Keep as canonical if it regenerates the exposure outputs used downstream. |
-| 0b | `notebooks/preparation/flood_protection.ipynb` | Process FLOPROS protection and adaptation-cost layers. | Keep as canonical if adaptation cost/results are used in the paper. |
-| 0c | `notebooks/preparation/copula_flood_dependence.ipynb` | Fit inter-basin GloFAS discharge dependence and create copula samples. | Keep as canonical copula/dependence notebook. |
-| 0d | `notebooks/preparation/future_flood.ipynb` | Process ISIMIP future discharge into basin return-period shifts. | Keep as canonical future-climate notebook. |
-| 1 | `notebooks/pre_sim/1_flood_risk_overlay.ipynb` | Overlay flood hazard, vulnerability, and exposure. | Keep as canonical flood-risk overlay notebook. |
-| 2 | `notebooks/pre_sim/2_flood_risk_basin_sum.ipynb` | Aggregate risk rasters to basin/admin/sector losses. | Keep as canonical basin aggregation notebook. |
-| 3 | `notebooks/pre_sim/3_dignad_pre_simulation.ipynb` | Pre-compute DIGNAD outputs for interpolation. | Keep, but only rerun when DIGNAD parameters/grid changes. |
-| 4 | `notebooks/paper_analysis/full_simulation.ipynb` | Final integrated flood-macro-credit simulation. | Treat as the main paper-results notebook. |
-| 5 | `notebooks/paper_analysis/validation_2011_floods.ipynb` | Validate flood/macro/credit chain against 2011 Thailand floods. | Keep if validation is in the paper or supplement. |
-| 6 | `notebooks/paper_analysis/figures.ipynb` | Produce final paper figures and summary outputs. | Treat as the final figure-generation notebook. |
+Required bundles:
 
-Likely deletion/archive candidates after the rerun:
+- `inputs/` folder: `[placeholder: input data repository link]`
+- selected `outputs/` folders needed by the paper simulation notebooks:
+  `[placeholder: selected output repository link]`
 
-- `notebooks/scratch_DIGNAD_presim.ipynb`
-- `notebooks/dignad_four_parameter_workflow.ipynb`, if fully superseded by
-  `notebooks/pre_sim/3_dignad_pre_simulation.ipynb`
-- `notebooks/flood_and_macro_sim.ipynb`, if superseded by
-  `notebooks/paper_analysis/full_simulation.ipynb`
-- `notebooks/full_model_framework_simulation.ipynb`, if superseded by
-  `notebooks/paper_analysis/full_simulation.ipynb`
-- `notebooks/paper_figures.ipynb`, if superseded by
-  `notebooks/paper_analysis/figures.ipynb`
-- `notebooks/0.1_data_prep.ipynb`
-- `notebooks/0.2_Copula_Fitting.ipynb`, if superseded by
-  `notebooks/preparation/copula_flood_dependence.ipynb`
-- `notebooks/0.3_future_flood.ipynb`, if superseded by
-  `notebooks/preparation/future_flood.ipynb`
-- `notebooks/1_flood_risk_overlay.ipynb`, if superseded by
-  `notebooks/pre_sim/1_flood_risk_overlay.ipynb`
-- `notebooks/2_risk_basin_zonal_sum.ipynb`, if superseded by
-  `notebooks/pre_sim/2_flood_risk_basin_sum.ipynb`
-- `notebooks/3_national_flood_simulation.ipynb`,
-  `notebooks/3_national_flood_simulation_future.ipynb`, and
-  `notebooks/4_macro_simulation.ipynb`, if superseded by
-  `notebooks/paper_analysis/full_simulation.ipynb`
+Steps:
 
-The DIGNAD pre-computation can take many hours because individual MATLAB runs
-are executed repeatedly. For paper reproduction, archive the pre-computed DIGNAD
-CSV outputs with the data bundle so users can reproduce final results without
-rerunning every DIGNAD scenario.
+1. Download and unpack the required `inputs/` and selected `outputs/` folders
+   into the repository root.
+2. Install the Python package and configure DIGNAD as described below.
+3. Run:
+   - `notebooks/paper_analysis/full_simulation.ipynb`
+   - `notebooks/paper_analysis/validation_2011_floods.ipynb`
+   - `notebooks/paper_analysis/figures.ipynb`
 
-## Data Availability Plan
+### Option C: Figure Reproduction
 
-The current local `inputs/` folder is about 4.6 GB and `outputs/` is about
-2.2 GB. These files should not be committed to Git. Recommended release pattern:
+Use this option to reproduce only the paper figures from archived model outputs.
 
-- host source code on GitHub or another Git repository;
-- host `inputs/` plus required cached outputs on a research-data repository with
-  a DOI, preferably Zenodo for this size class;
-- add the data DOI to this README and the paper's data availability statement
-  after deposit.
+Required bundles:
+
+- `inputs/` folder: `[placeholder: input data repository link]`
+- all `outputs/` folders: `[placeholder: output data repository link]`
+
+Steps:
+
+1. Download and unpack the required `inputs/` and `outputs/` folders into the
+   repository root.
+2. Install the Python package.
+3. Run `notebooks/paper_analysis/figures.ipynb`.
+
+## Notebook Runtime
+
+Approximate runtimes are shown for the final workflow notebooks.
+
+| Notebook | Runtime |
+| --- | --- |
+| `notebooks/preparation/exposure.ipynb` | 10 mins |
+| `notebooks/preparation/flood_protection.ipynb` | 2 mins |
+| `notebooks/preparation/copula_flood_dependence.ipynb` | 5 mins |
+| `notebooks/preparation/future_flood.ipynb` | 3 hours |
+| `notebooks/pre_sim/1_flood_risk_overlay.ipynb` | 1 hour |
+| `notebooks/pre_sim/2_flood_risk_basin_sum.ipynb` | 10 mins |
+| `notebooks/pre_sim/3_dignad_pre_simulation.ipynb` | 28 hours |
+| `notebooks/paper_analysis/full_simulation.ipynb` | 3 hours |
+| `notebooks/paper_analysis/validation_2011_floods.ipynb` | 20 mins |
+| `notebooks/paper_analysis/figures.ipynb` | 5 mins |
 
 ## Important External Dependency: DIGNAD
 
@@ -141,19 +149,18 @@ Download `DIGNAD.zip` from the IMF website, unzip it, and copy the extracted
 sovereign-risk/
   DIGNAD/
     DIGNAD_Toolkit/
-      DIGNAD_Toolkit/
-        input_DIG-ND.xlsx
-        simulate.m
-        ...
+      input_DIG-ND.xlsx
+      simulate.m
+      ...
 ```
 
-The key model files, including `simulate.m`, should be inside the innermost
-`DIGNAD_Toolkit` folder. If the IMF zip extracts to a slightly different folder
-layout, adjust the copied folder so that the Python code can find:
+The key model files, including `simulate.m`, should be inside
+`DIGNAD/DIGNAD_Toolkit/`. If the IMF zip extracts to a slightly different
+folder layout, adjust the copied folder so that the Python code can find:
 
 ```text
-DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/input_DIG-ND.xlsx
-DIGNAD/DIGNAD_Toolkit/DIGNAD_Toolkit/simulate.m
+DIGNAD/DIGNAD_Toolkit/input_DIG-ND.xlsx
+DIGNAD/DIGNAD_Toolkit/simulate.m
 ```
 
 The default IMF `input_DIG-ND.xlsx` should be replaced with the pre-prepared
@@ -161,14 +168,4 @@ Thailand-calibrated workbook supplied with this project. That workbook is set up
 to be modified by the Python scripts before each DIGNAD run.
 
 Only redistribute the DIGNAD toolkit if its licence permits redistribution.
-Otherwise, archive a short setup note and point users to the official DIGNAD
-source.
-
-## Publication-Readiness Checklist
-
-- [ ] Publish the code repository.
-- [ ] Publish the data bundle and add the DOI in this README.
-- [ ] Clean or clear notebook outputs that contain local absolute paths.
-- [ ] Move paper-facing results into `notebooks/paper_analysis/`.
-- [ ] Confirm the DIGNAD redistribution/licensing position.
-- [ ] Add the final paper citation and DOI once available.
+Otherwise, point users to the official DIGNAD source.
