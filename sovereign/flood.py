@@ -234,11 +234,13 @@ class BasinComponent:
         return float(np.interp(aep_event, self.aeps, self.adapted_losses))
 
     def protected_loss(self, aep_event: float) -> float:
-        """Baseline scenario: apply baseline protection only."""
-        if aep_event > self.protection_aep:  # protected
-            return 0.0
-        else:
+        if self.protection_aep <= 0 or np.isnan(self.protection_aep):
             return self.baseline_loss_at(aep_event)
+
+        if aep_event > self.protection_aep:
+            return 0.0
+
+        return self.baseline_loss_at(aep_event)
 
     def adapted_loss(self, aep_event:float, adapted_protection_aep: float) -> float:
         """
