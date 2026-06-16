@@ -76,17 +76,31 @@ def calculate_river_length_per_admin(admin, rivers, threshold, urbanisation, urb
 
 def calculate_increased_protection(admin, protection_goal):
     '''
-    Function calculates how much additional protection is needed to achieve a protection goal.
+    Function calculates the protection increase needed to achieve a protection goal.
     Function requires as input the target protection level and the admin dataset (FLOPROS layer).
-    Function ouptus an admin dataset with an additional column with the amount of additional 
-    protection needed.
+    Function outputs an admin dataset with current protection, future protection, and the
+    multiplicative protection ratio needed.
     '''
-    # Calculate additional protection needed
-    admin['Add_Pr'] = protection_goal - admin['MerL_Riv']
-    # Ensure there are no negative values
-    admin['Add_Pr'] = admin['Add_Pr'].clip(lower=0)
-    # Store the new protection level
-    admin['New_Pr_L'] = protection_goal
+    current_protection = pd.to_numeric(admin['MerL_Riv'], errors='coerce')
+    protection_goal = float(protection_goal)
+
+    # Only increase protection where current protection is below the target.
+    future_protection = current_protection.where(
+        current_protection >= protection_goal,
+        protection_goal,
+    )
+
+    protection_ratio = future_protection / current_protection
+    protection_ratio = protection_ratio.replace([np.inf, -np.inf], np.nan)
+    protection_ratio = protection_ratio.clip(lower=1)
+
+    admin['Pr_current'] = current_protection
+    admin['Pr_future'] = future_protection
+    admin['Pr_Ratio'] = protection_ratio
+    # Keep the original column name for downstream compatibility; this now stores
+    # the protection ratio, not the arithmetic difference in return periods.
+    admin['Add_Pr'] = protection_ratio
+    admin['New_Pr_L'] = future_protection
 
     return admin
 
@@ -94,14 +108,18 @@ def calculate_increased_protection_costs(admin, unit_cost):
     '''
     This function calculates the cost of additional protection given a unit cost (per km).
     The function calculates the unit cost based on the length of rivers within the admin area.
-    The cost is applied using the formula unit_cost * log2(additional_protection) from Boulange et al 2023.
+    The cost is applied using the formula unit_cost * log2(protection_ratio) from Boulange et al 2023.
     https://link.springer.com/article/10.1007/s11069-023-06017-7 
     The function outputs an admin dataset with an additional column with cost of increasing protection
     to desired levels. Also calculates cost for only urban rivers.
     '''
+    ratio_col = 'Pr_Ratio' if 'Pr_Ratio' in admin.columns else 'Add_Pr'
+    protection_ratio = pd.to_numeric(admin[ratio_col], errors='coerce')
+    protection_ratio = protection_ratio.replace([np.inf, -np.inf], np.nan).clip(lower=1)
+
     # Calculate additional costs of protection
-    admin['Add_Pr_c'] = np.log2(admin['Add_Pr']) * unit_cost * admin['r_lng_km']
-    admin['Add_Pr_c_u'] = np.log2(admin['Add_Pr']) * unit_cost * admin['u_r_lng_km']
+    admin['Add_Pr_c'] = np.log2(protection_ratio) * unit_cost * admin['r_lng_km']
+    admin['Add_Pr_c_u'] = np.log2(protection_ratio) * unit_cost * admin['u_r_lng_km']
 
     return admin
 
